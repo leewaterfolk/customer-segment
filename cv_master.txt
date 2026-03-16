@@ -1,0 +1,50 @@
+FULL NAME
+Location | Email | Phone | LinkedIn | GitHub
+
+---
+
+SUMMARY
+Replace this section with a 2-3 sentence professional summary.
+
+---
+
+EXPERIENCE
+
+Company Name | Job Title | Month Year – Month Year
+• Achievement or responsibility with metric
+• Achievement or responsibility with metric
+
+Company Name | Job Title | Month Year – Month Year
+• Achievement or responsibility with metric
+• Achievement or responsibility with metric
+
+---
+
+EDUCATION
+
+University Name | Degree, Field of Study | Year
+• Relevant coursework or achievement
+
+---
+
+SKILLS
+
+Technical: e.g. Python, SQL, AWS, Docker, Kubernetes
+Soft Skills: e.g. Leadership, Communication, Problem-solving
+
+---
+
+CERTIFICATIONS
+• Certification Name — Issuing Body, Year
+
+---
+
+PROJECTS
+
+Project Name | URL (optional)
+• Brief description of what it is and your role
+• Key technology used and outcome/impact
+
+---
+
+(Replace this file with your actual CV text before running cv_tailor.py)

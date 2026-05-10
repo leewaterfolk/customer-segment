@@ -1,0 +1,22 @@
+아래 Fiverr 이메일을 분석해서 JSON만 반환하세요. 다른 텍스트 없이.
+
+이메일 내용:
+{{email_body}}
+
+반환 형식 (JSON only):
+{
+  "category": "korea_market | meta_ads | naver_ads | insta | investment | other",
+  "language": "Korean | English | French | Other",
+  "urgency": "high | medium | low",
+  "slack_channel": "#korea-market | #meta-ads | #naver-ads | #insta | #investment | #inbox-fiverr",
+  "brief": "한 줄 요약 (클라이언트가 원하는 것)",
+  "draft_reply": "Fiverr 답변 초안 (영어, 3-4문장, 전문성 강조)"
+}
+
+분류 기준:
+- korea_market: 한국 진출, Korean market, K-market 언급
+- meta_ads: Facebook/Instagram 광고, Meta ads
+- naver_ads: Naver, 네이버, 블로그 SEO
+- insta: Instagram content, 인스타, reels
+- investment: 투자, market analysis
+- other: 위 카테고리 해당 없음 → #inbox-fiverr

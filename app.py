@@ -53,14 +53,18 @@ with st.sidebar:
         placeholder="Paste your full CV / résumé text here...",
     )
 
-    api_key = st.text_input(
-        "Anthropic API Key",
-        value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password",
-        help="Or set ANTHROPIC_API_KEY env var",
-    )
-    if api_key:
-        os.environ["ANTHROPIC_API_KEY"] = api_key
+    # API key: env var takes priority (Railway), fallback to sidebar input
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not env_key:
+        api_key = st.text_input(
+            "Anthropic API Key",
+            type="password",
+            help="Set ANTHROPIC_API_KEY in Railway env vars to skip this",
+        )
+        if api_key:
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+    else:
+        st.success("API key loaded from environment", icon="✓")
 
     st.divider()
     st.caption("Steps 01–04 of the résumé loop")

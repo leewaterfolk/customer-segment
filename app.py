@@ -4,23 +4,12 @@ app.py - JobPA Web UI
 Run: streamlit run app.py
 
 Required env vars (set in Railway):
-  ANTHROPIC_API_KEY   — Claude API key
-  SUPABASE_URL        — https://xxxx.supabase.co
-  SUPABASE_ANON_KEY   — your Supabase anon key
-  APP_URL             — https://your-app.up.railway.app  (no trailing slash)
+  ANTHROPIC_API_KEY   — Claude API key  (required)
 
-Supabase setup (run once in SQL editor):
-  CREATE TABLE IF NOT EXISTS waitlist (
-    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-    email text UNIQUE NOT NULL,
-    created_at timestamptz DEFAULT now()
-  );
-  ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY "insert_waitlist" ON waitlist FOR INSERT WITH CHECK (true);
-
-Google OAuth setup (Supabase → Authentication → Providers → Google):
-  Redirect URI to whitelist in Google Cloud Console:
-  https://[supabase-project].supabase.co/auth/v1/callback
+Optional:
+  WAITLIST_ENDPOINT   — a Formspree (or any) POST URL to collect emails.
+                        If unset, emails are appended to local waitlist.txt.
+                        Get a free one at https://formspree.io (form action URL).
 """
 
 import os
@@ -29,9 +18,7 @@ import anthropic
 
 # ── Config ───────────────────────────────────────────────────────────────────
 CV_DEFAULT_PATH = "cv_master.txt"
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
-APP_URL = os.environ.get("APP_URL", "http://localhost:8501")
+WAITLIST_ENDPOINT = os.environ.get("WAITLIST_ENDPOINT", "")
 
 st.set_page_config(
     page_title="JobPA — Beat the ATS",
@@ -74,34 +61,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Supabase client ───────────────────────────────────────────────────────────
-def get_supabase():
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        return None
-    try:
-        from supabase import create_client
-        return create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-    except Exception:
-        return None
+# ── Waitlist persistence ──────────────────────────────────────────────────────
+def save_waitlist_email(email: str) -> tuple[bool, str]:
+    """Returns (success, message). Posts to WAITLIST_ENDPOINT if set, else local file."""
+    if WAITLIST_ENDPOINT:
+        try:
+            import urllib.request
+            import json
+            data = json.dumps({"email": email}).encode()
+            req = urllib.request.Request(
+                WAITLIST_ENDPOINT, data=data,
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=10)
+            return True, "You're on the list! We'll be in touch."
+        except Exception as e:
+            return False, f"Something went wrong: {e}"
+    else:
+        try:
+            with open("waitlist.txt", "a", encoding="utf-8") as f:
+                f.write(email + "\n")
+            return True, "You're on the list!"
+        except Exception as e:
+            return False, f"Something went wrong: {e}"
 
 # ── Session init ──────────────────────────────────────────────────────────────
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.user_email = None
-
-# ── OAuth callback handler ────────────────────────────────────────────────────
-params = st.query_params
-if "code" in params and not st.session_state.authenticated:
-    supabase = get_supabase()
-    if supabase:
-        try:
-            result = supabase.auth.exchange_code_for_session({"auth_code": params["code"]})
-            st.session_state.authenticated = True
-            st.session_state.user_email = result.user.email if result.user else ""
-            st.query_params.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Login failed: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LANDING PAGE  (shown when not authenticated)
@@ -136,35 +123,12 @@ def show_landing():
 </div>
 """, unsafe_allow_html=True)
 
-    supabase = get_supabase()
-
-    # ── Get Started: Google OAuth ─────────────────────────────────────────────
-    st.markdown("<div class='cta-row'>", unsafe_allow_html=True)
-
-    if supabase:
-        try:
-            oauth = supabase.auth.sign_in_with_oauth({
-                "provider": "google",
-                "options": {"redirect_to": APP_URL},
-            })
-            st.markdown(
-                f'<a class="btn-google" href="{oauth.url}">'
-                f'<svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z"/></svg>'
-                f'Get Started with Google</a>',
-                unsafe_allow_html=True,
-            )
-        except Exception:
-            st.info("Configure SUPABASE_URL and SUPABASE_ANON_KEY in Railway to enable Google login.")
-    else:
-        # No Supabase — let user enter directly
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.info("Set SUPABASE_URL + SUPABASE_ANON_KEY in Railway to enable Google login.")
-            if st.button("Enter without login →", type="secondary"):
-                st.session_state.authenticated = True
-                st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    # ── Get Started ────────────────────────────────────────────────────────────
+    col1, col2, col3 = st.columns([1, 1.4, 1])
+    with col2:
+        if st.button("🚀 Get Started", type="primary", use_container_width=True):
+            st.session_state.authenticated = True
+            st.rerun()
 
     # ── Join Waitlist ──────────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -177,23 +141,11 @@ def show_landing():
             email = st.text_input("Email address", placeholder="you@company.com")
             submitted = st.form_submit_button("Join Waitlist", type="primary", use_container_width=True)
             if submitted:
-                if not email or "@" not in email:
+                if not email or "@" not in email or "." not in email.split("@")[-1]:
                     st.error("Please enter a valid email address.")
-                elif supabase:
-                    try:
-                        supabase.table("waitlist").insert({"email": email}).execute()
-                        st.success("You're on the list! We'll be in touch.")
-                    except Exception as e:
-                        err = str(e)
-                        if "duplicate" in err.lower() or "unique" in err.lower():
-                            st.info("You're already on the waitlist.")
-                        else:
-                            st.error(f"Something went wrong: {err}")
                 else:
-                    # Fallback: save to local file
-                    with open("waitlist.txt", "a") as f:
-                        f.write(email + "\n")
-                    st.success("You're on the list!")
+                    ok, msg = save_waitlist_email(email.strip())
+                    (st.success if ok else st.error)(msg)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN APP  (shown when authenticated)
@@ -201,19 +153,11 @@ def show_landing():
 def show_app():
     # Sidebar
     with st.sidebar:
-        if st.session_state.user_email:
-            st.markdown(f"**{st.session_state.user_email}**")
-            if st.button("Sign out", type="secondary"):
-                supabase = get_supabase()
-                if supabase:
-                    try:
-                        supabase.auth.sign_out()
-                    except Exception:
-                        pass
-                st.session_state.authenticated = False
-                st.session_state.user_email = None
-                st.rerun()
-            st.divider()
+        if st.button("← Back to home", type="secondary"):
+            st.session_state.authenticated = False
+            st.session_state.user_email = None
+            st.rerun()
+        st.divider()
 
         st.header("Your Résumé")
         default_cv = ""

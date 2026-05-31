@@ -3,22 +3,57 @@
 app.py - JobPA Web UI
 Run: streamlit run app.py
 
-Required env vars (set in Railway):
+Required env vars:
   ANTHROPIC_API_KEY   — Claude API key  (required)
 
 Optional:
-  WAITLIST_ENDPOINT   — a Formspree (or any) POST URL to collect emails.
+  WAITLIST_ENDPOINT   — Formspree (or any) POST URL to collect waitlist emails.
                         If unset, emails are appended to local waitlist.txt.
-                        Get a free one at https://formspree.io (form action URL).
+
+Google login (optional — app works without it via "Try it now"):
+  Add a .streamlit/secrets.toml with:
+
+    [auth]
+    redirect_uri = "https://your-domain/oauth2callback"
+    cookie_secret = "a-long-random-string"
+    client_id = "<google-oauth-client-id>"
+    client_secret = "<google-oauth-client-secret>"
+    server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+
+  Then in Google Cloud Console → Credentials → OAuth client (Web application),
+  add the SAME redirect_uri to "Authorised redirect URIs". That single match is
+  what fixes the redirect_uri_mismatch error.
 """
 
 import os
 import streamlit as st
 import anthropic
 
+from resume_regions import REGIONS, REGION_ORDER, build_system_prompt
+
 # ── Config ───────────────────────────────────────────────────────────────────
 CV_DEFAULT_PATH = "cv_master.txt"
 WAITLIST_ENDPOINT = os.environ.get("WAITLIST_ENDPOINT", "")
+
+
+# ── Google login (Streamlit native OIDC, optional) ────────────────────────────
+def google_login_available() -> bool:
+    """True if [auth] is configured in secrets and st.login exists."""
+    if not hasattr(st, "login"):
+        return False
+    try:
+        return "auth" in st.secrets
+    except Exception:
+        return False
+
+
+def current_user_email():
+    try:
+        if hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+            return getattr(st.user, "email", "") or ""
+    except Exception:
+        pass
+    return None
 
 st.set_page_config(
     page_title="JobPA — Beat the ATS",
@@ -90,6 +125,12 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.user_email = None
 
+# If the user completed Google OIDC login, treat them as authenticated.
+_google_email = current_user_email()
+if _google_email:
+    st.session_state.authenticated = True
+    st.session_state.user_email = _google_email
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LANDING PAGE  (shown when not authenticated)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -126,9 +167,17 @@ def show_landing():
     # ── Get Started ────────────────────────────────────────────────────────────
     col1, col2, col3 = st.columns([1, 1.4, 1])
     with col2:
-        if st.button("🚀 Get Started", type="primary", use_container_width=True):
-            st.session_state.authenticated = True
-            st.rerun()
+        if google_login_available():
+            if st.button("🔐  Continue with Google", type="primary", use_container_width=True):
+                st.login("google")
+            st.caption("or")
+            if st.button("🚀  Try it now (no login)", use_container_width=True):
+                st.session_state.authenticated = True
+                st.rerun()
+        else:
+            if st.button("🚀 Get Started", type="primary", use_container_width=True):
+                st.session_state.authenticated = True
+                st.rerun()
 
     # ── Join Waitlist ──────────────────────────────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
@@ -153,9 +202,16 @@ def show_landing():
 def show_app():
     # Sidebar
     with st.sidebar:
+        if st.session_state.user_email:
+            st.markdown(f"👤 **{st.session_state.user_email}**")
         if st.button("← Back to home", type="secondary"):
             st.session_state.authenticated = False
             st.session_state.user_email = None
+            if current_user_email():
+                try:
+                    st.logout()
+                except Exception:
+                    pass
             st.rerun()
         st.divider()
 
@@ -212,9 +268,65 @@ def show_app():
         return stream.get_final_message(), full
 
     st.title("🎯 JobPA — Beat the ATS")
-    st.caption("The Résumé Loop: Diagnose → Refine → Rewrite → Prep")
+    st.caption("Build region-ready résumés, then run the loop: Diagnose → Refine → Rewrite → Prep")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["01 · Diagnose", "02 · Refine", "03 · Rewrite", "04 · Prep"])
+    tab0, tab1, tab2, tab3, tab4 = st.tabs(
+        ["🌍 Build", "01 · Diagnose", "02 · Refine", "03 · Rewrite", "04 · Prep"]
+    )
+
+    # ── 00 Build: Region-specific résumé builder (the differentiator) ──────────
+    with tab0:
+        st.subheader("Region-Ready Résumé Builder")
+        st.caption("One résumé, localised to the country you're applying in. "
+                   "A CV that wins in Seoul gets auto-rejected in San Francisco — we fix that.")
+
+        bcol1, bcol2 = st.columns([1, 1])
+        with bcol1:
+            region_key = st.selectbox(
+                "Target market",
+                options=REGION_ORDER,
+                format_func=lambda k: REGIONS[k]["label"],
+                key="build_region",
+            )
+        with bcol2:
+            target_role = st.text_input(
+                "Target role (optional)",
+                placeholder="e.g. Senior Backend Engineer",
+                key="build_role",
+            )
+
+        r = REGIONS[region_key]
+        with st.expander(f"What {r['label']} recruiters expect", expanded=False):
+            st.markdown(
+                f"**Document:** {r['doc_name']}  \n"
+                f"**Language:** {r['language']}  \n"
+                f"**Photo:** {r['photo']}  \n"
+                f"**Length:** {r['length']}  \n"
+                f"**Cover letter:** {r['self_intro']}"
+            )
+
+        build_input = st.text_area(
+            "Your info — paste an existing résumé, or just list your experience, skills & education",
+            value=cv_text,
+            height=240,
+            placeholder="Paste your current CV (any language/format), or bullet out your background. "
+                        "The builder will localise it to the selected market.",
+            key="build_input",
+        )
+
+        if st.button(f"Build my {r['doc_name']}", type="primary", key="btn_build"):
+            if not build_input.strip():
+                st.warning("Add your info above (or paste a CV in the sidebar) first.")
+                st.stop()
+            output = st.empty()
+            user_msg = f"## Candidate's raw information / existing résumé\n\n{build_input}"
+            if target_role.strip():
+                user_msg += f"\n\n## Target role\n\n{target_role.strip()}"
+            user_msg += (f"\n\nProduce a fully localised {r['doc_name']} for the "
+                         f"{r['label']} market following every regional rule.")
+            with st.spinner(f"Localising for {r['label']}…"):
+                final, _ = stream_response(build_system_prompt(region_key), user_msg, output)
+            st.caption(f"Tokens — input: {final.usage.input_tokens} / output: {final.usage.output_tokens}")
 
     # ── 01 Diagnose ───────────────────────────────────────────────────────────
     with tab1:
